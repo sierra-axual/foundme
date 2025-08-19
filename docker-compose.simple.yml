@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # Frontend Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: foundme-frontend-dev
+    ports:
+      - "8472:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - REACT_APP_API_URL=http://localhost:3001
+    networks:
+      - foundme-dev-network
+
+  # Backend API (Monolithic - All functionality in one service)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: foundme-backend-dev
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - DATABASE_URL=postgresql://foundme_user:dev_password_secure_123@postgres:5432/foundme_dev
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=dev_jwt_secret_key_678_secure_development_only
+      - STRIPE_SECRET_KEY=sk_test_your_stripe_test_key_here
+      - HIBP_API_KEY=your_haveibeenpwned_api_key_here
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - foundme-dev-network
+
+  # PostgreSQL Database (Main database for everything)
+  postgres:
+    image: postgres:15-alpine
+    container_name: foundme-postgres-dev
+    ports:
+      - "7942:5432"
+    environment:
+      - POSTGRES_DB=foundme_dev
+      - POSTGRES_USER=foundme_user
+      - POSTGRES_PASSWORD=dev_password_secure_123
+    volumes:
+      - ./database/postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - foundme-dev-network
+
+  # Redis Cache (Sessions, caching, rate limiting)
+  redis:
+    image: redis:7-alpine
+    container_name: foundme-redis-dev
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - ./cache/redis_data:/data
+    networks:
+      - foundme-dev-network
+
+networks:
+  foundme-dev-network:
+    name: foundme-dev-network
+    driver: bridge

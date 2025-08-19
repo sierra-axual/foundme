@@ -1,0 +1,314 @@
+version: '3.8'
+
+services:
+  # Frontend Application
+  frontend:
+    build: ./frontend
+    container_name: foundme-frontend-dev
+    ports:
+      - "8472:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - REACT_APP_API_URL=http://localhost:5928
+      - REACT_APP_WS_URL=ws://localhost:4857
+    depends_on:
+      - api-gateway
+    networks:
+      - foundme-dev-network
+
+  # API Gateway
+  api-gateway:
+    build: ./api-gateway
+    container_name: foundme-api-gateway-dev
+    ports:
+      - "5928:3000"
+    volumes:
+      - ./api-gateway:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - AUTH_SERVICE_URL=http://auth:3000
+      - DISCOVERY_SERVICE_URL=http://discovery:3000
+      - RISK_SERVICE_URL=http://risk:3000
+      - SUBSCRIPTION_SERVICE_URL=http://subscription:3000
+      - NOTIFICATION_SERVICE_URL=http://notification:3000
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://foundme_user:dev_rabbit_secure_789@rabbitmq:5672
+    depends_on:
+      - redis
+      - rabbitmq
+    networks:
+      - foundme-dev-network
+
+  # Authentication Service
+  auth:
+    build: ./services/auth
+    container_name: foundme-auth-service-dev
+    ports:
+      - "7341:3000"
+    volumes:
+      - ./services/auth:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - JWT_SECRET=dev_jwt_secret_key_678_secure_development_only
+      - JWT_EXPIRES_IN=24h
+      - POSTGRES_URL=postgresql://foundme_user:dev_password_secure_123@postgres:5432/foundme_dev
+      - REDIS_URL=redis://redis:6379
+      - BCRYPT_ROUNDS=12
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - foundme-dev-network
+
+  # Discovery Service (OSINT)
+  discovery:
+    build: ./services/discovery
+    container_name: foundme-discovery-service-dev
+    ports:
+      - "9156:3000"
+    volumes:
+      - ./services/discovery:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - RABBITMQ_URL=amqp://foundme_user:dev_rabbit_secure_789@rabbitmq:5672
+      - REDIS_URL=redis://redis:6379
+      - MONGODB_URL=mongodb://foundme_admin:dev_mongo_secure_456@mongodb:27017/foundme_dev
+      - HIBP_API_KEY=your_haveibeenpwned_api_key_here
+      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage
+    depends_on:
+      - rabbitmq
+      - redis
+      - mongodb
+    networks:
+      - foundme-dev-network
+
+  # Risk Assessment Service
+  risk:
+    build: ./services/risk
+    container_name: foundme-risk-service-dev
+    ports:
+      - "6483:3000"
+    volumes:
+      - ./services/risk:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      - MONGODB_URL=mongodb://foundme_admin:dev_mongo_secure_456@mongodb:27017/foundme_dev
+      - POSTGRES_URL=postgresql://foundme_user:dev_password_secure_123@postgres:5432/foundme_dev
+      - RABBITMQ_URL=amqp://foundme_user:dev_rabbit_secure_789@rabbitmq:5672
+      - ML_MODEL_PATH=/app/models
+    depends_on:
+      - redis
+      - mongodb
+      - postgres
+      - rabbitmq
+    networks:
+      - foundme-dev-network
+
+  # Subscription Service
+  subscription:
+    build: ./services/subscription
+    container_name: foundme-subscription-service-dev
+    ports:
+      - "3729:3000"
+    volumes:
+      - ./services/subscription:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - STRIPE_SECRET_KEY=sk_test_your_stripe_test_key_here
+      - STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
+      - POSTGRES_URL=postgresql://foundme_user:dev_password_secure_123@postgres:5432/foundme_dev
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://foundme_user:dev_rabbit_secure_789@rabbitmq:5672
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - foundme-dev-network
+
+  # Notification Service
+  notification:
+    build: ./services/notification
+    container_name: foundme-notification-service-dev
+    ports:
+      - "4857:3000"
+    volumes:
+      - ./services/notification:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - RABBITMQ_URL=amqp://foundme_user:dev_rabbit_secure_789@rabbitmq:5672
+      - REDIS_URL=redis://redis:6379
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=your_email@gmail.com
+      - SMTP_PASS=your_app_password_here
+      - TWILIO_ACCOUNT_SID=your_twilio_account_sid
+      - TWILIO_AUTH_TOKEN=your_twilio_auth_token
+      - TWILIO_PHONE_NUMBER=your_twilio_phone_number
+    depends_on:
+      - rabbitmq
+      - redis
+    networks:
+      - foundme-dev-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: foundme-postgres-dev
+    ports:
+      - "7942:5432"
+    environment:
+      - POSTGRES_DB=foundme_dev
+      - POSTGRES_USER=foundme_user
+      - POSTGRES_PASSWORD=dev_password_secure_123
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - ./database/postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - foundme-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U foundme_user -d foundme_dev"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: foundme-redis-dev
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass dev_redis_password_123
+    volumes:
+      - ./cache/redis_data:/data
+    networks:
+      - foundme-dev-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MongoDB
+  mongodb:
+    image: mongo:6
+    container_name: foundme-mongodb-dev
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=foundme_admin
+      - MONGO_INITDB_ROOT_PASSWORD=dev_mongo_secure_456
+      - MONGO_INITDB_DATABASE=foundme_dev
+    volumes:
+      - ./database/mongo_data:/data/db
+      - ./database/mongo-init:/docker-entrypoint-initdb.d
+    networks:
+      - foundme-dev-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: foundme-rabbitmq-dev
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=foundme_user
+      - RABBITMQ_DEFAULT_PASS=dev_rabbit_secure_789
+      - RABBITMQ_DEFAULT_VHOST=foundme_dev
+    volumes:
+      - ./queue/rabbitmq_data:/var/lib/rabbitmq
+      - ./queue/definitions.json:/etc/rabbitmq/definitions.json
+    networks:
+      - foundme-dev-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: foundme-prometheus-dev
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - foundme-dev-network
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: foundme-grafana-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=dev_grafana_secure_012
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - foundme-dev-network
+    depends_on:
+      - prometheus
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: foundme-nginx-dev
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    depends_on:
+      - frontend
+      - api-gateway
+    networks:
+      - foundme-dev-network
+
+networks:
+  foundme-dev-network:
+    name: foundme-dev-network
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
