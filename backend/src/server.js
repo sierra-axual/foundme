@@ -77,11 +77,39 @@ app.use(compression());
 // Logging middleware
 app.use(morgan('combined'));
 
-// Initialize auth middleware
-const authMiddleware = new AuthMiddleware();
-
 // Request logging middleware
-app.use(authMiddleware.logRequest.bind(authMiddleware));
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  
+  // Log request start
+  logger.info('Request started', {
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+    userAgent: req.get('User-Agent'),
+    userId: req.user?.userId || 'anonymous',
+    timestamp: new Date().toISOString()
+  });
+
+  // Override res.end to log response
+  const originalEnd = res.end;
+  res.end = function(chunk, encoding) {
+    const duration = Date.now() - startTime;
+    
+    logger.info('Request completed', {
+      method: req.method,
+      url: req.url,
+      statusCode: res.statusCode,
+      duration: `${duration}ms`,
+      userId: req.user?.userId || 'anonymous',
+      timestamp: new Date().toISOString()
+    });
+
+    originalEnd.call(this, chunk, encoding);
+  };
+
+  next();
+});
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -134,17 +162,22 @@ app.get('/api/db/status', async (req, res) => {
   }
 });
 
-// API routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/discovery', require('./routes/discovery'));
-app.use('/api/risk', require('./routes/risk'));
-app.use('/api/subscription', require('./routes/subscription'));
-app.use('/api/notification', require('./routes/notification'));
 
-// Test Routes (Development only)
-if (process.env.NODE_ENV === 'development') {
-  app.use('/api/test', require('./routes/test'));
-}
+
+// Authentication routes
+app.use('/api/auth', require('./routes/auth'));
+
+// Admin panel routes
+app.use('/api/admin', require('./routes/admin'));
+
+// Full OSINT routes with search functionality
+app.use('/api/osint', require('./routes/osint'));
+
+// Advanced OSINT routes for analytics and reporting
+app.use('/api/osint-advanced', require('./routes/osint-advanced'));
+
+// Export routes for CSV and PDF generation
+app.use('/api/export', require('./routes/export'));
 
 // 404 handler
 app.use('*', (req, res) => {

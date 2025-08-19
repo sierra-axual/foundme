@@ -1,247 +1,422 @@
 const express = require('express');
-const AuthService = require('../services/authService');
-const AuthMiddleware = require('../middleware/auth');
 const { logger } = require('../config/database');
+const AuthService = require('../services/authService');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 const authService = new AuthService();
-const authMiddleware = new AuthMiddleware();
 
-// User registration
+/**
+ * @route   POST /api/auth/register
+ * @desc    Register a new user
+ * @access  Public
+ */
 router.post('/register', async (req, res) => {
   try {
-    const result = await authService.registerUser(req.body);
-    
-    res.status(201).json({
-      message: 'User registered successfully',
-      ...result
-    });
-  } catch (error) {
-    logger.error('Registration route error:', error);
-    
-    if (error.message === 'User with this email already exists') {
-      return res.status(409).json({
-        error: error.message,
-        code: 'USER_EXISTS'
-      });
-    }
-    
-    if (error.name === 'ZodError') {
+    const { username, email, password, role = 'user' } = req.body;
+
+    // Basic validation
+    if (!username || !email || !password) {
       return res.status(400).json({
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: error.errors
+        success: false,
+        error: 'Username, email, and password are required'
       });
     }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password must be at least 8 characters long'
+      });
+    }
+
+    if (role && !['user', 'admin'].includes(role)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid role specified'
+      });
+    }
+
+    const result = await authService.registerUser({
+      username,
+      email,
+      password,
+      role
+    });
+
+    res.status(201).json(result);
+
+  } catch (error) {
+    logger.error('User registration failed:', error);
     
+    if (error.message.includes('already exists')) {
+      return res.status(409).json({
+        success: false,
+        error: error.message
+      });
+    }
+
     res.status(500).json({
-      error: 'Internal server error during registration',
-      code: 'REGISTRATION_ERROR'
+      success: false,
+      error: 'Registration failed. Please try again.'
     });
   }
 });
 
-// User login
+/**
+ * @route   POST /api/auth/login
+ * @desc    Authenticate user and return JWT tokens
+ * @access  Public
+ */
 router.post('/login', async (req, res) => {
   try {
-    const result = await authService.loginUser(req.body);
-    
-    res.status(200).json({
-      message: 'Login successful',
-      ...result
-    });
-  } catch (error) {
-    logger.error('Login route error:', error);
-    
-    if (error.message === 'Invalid email or password') {
-      return res.status(401).json({
-        error: error.message,
-        code: 'INVALID_CREDENTIALS'
-      });
-    }
-    
-    if (error.message.includes('Account is locked')) {
-      return res.status(423).json({
-        error: error.message,
-        code: 'ACCOUNT_LOCKED'
-      });
-    }
-    
-    if (error.name === 'ZodError') {
+    const { username, password } = req.body;
+
+    // Basic validation
+    if (!username || !password) {
       return res.status(400).json({
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: error.errors
+        success: false,
+        error: 'Username/email and password are required'
       });
     }
+
+    const result = await authService.loginUser({ username, password });
+
+    res.json(result);
+
+  } catch (error) {
+    logger.error('User login failed:', error);
     
+    if (error.message.includes('Invalid credentials') || 
+        error.message.includes('Account is deactivated')) {
+      return res.status(401).json({
+        success: false,
+        error: error.message
+      });
+    }
+
     res.status(500).json({
-      error: 'Internal server error during login',
-      code: 'LOGIN_ERROR'
+      success: false,
+      error: 'Login failed. Please try again.'
     });
   }
 });
 
-// Refresh access token
+/**
+ * @route   POST /api/auth/refresh
+ * @desc    Refresh access token using refresh token
+ * @access  Public
+ */
 router.post('/refresh', async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    
+
     if (!refreshToken) {
       return res.status(400).json({
-        error: 'Refresh token required',
-        code: 'MISSING_REFRESH_TOKEN'
+        success: false,
+        error: 'Refresh token is required'
       });
     }
-    
+
     const result = await authService.refreshAccessToken(refreshToken);
-    
-    res.status(200).json({
-      message: 'Token refreshed successfully',
-      ...result
-    });
+
+    res.json(result);
+
   } catch (error) {
-    logger.error('Token refresh route error:', error);
+    logger.error('Token refresh failed:', error);
     
-    if (error.message === 'Invalid refresh token') {
+    if (error.message.includes('Invalid refresh token') ||
+        error.message.includes('User not found')) {
       return res.status(401).json({
-        error: error.message,
-        code: 'INVALID_REFRESH_TOKEN'
+        success: false,
+        error: error.message
       });
     }
-    
+
     res.status(500).json({
-      error: 'Internal server error during token refresh',
-      code: 'REFRESH_ERROR'
+      success: false,
+      error: 'Token refresh failed. Please try again.'
     });
   }
 });
 
-// Logout
-router.post('/logout', authMiddleware.authenticateToken.bind(authMiddleware), async (req, res) => {
+/**
+ * @route   POST /api/auth/change-password
+ * @desc    Change user password (requires authentication)
+ * @access  Private
+ */
+router.post('/change-password', requireAuth, async (req, res) => {
   try {
-    const { refreshToken } = req.body;
-    
-    if (!refreshToken) {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.userId;
+
+    // Basic validation
+    if (!currentPassword || !newPassword) {
       return res.status(400).json({
-        error: 'Refresh token required',
-        code: 'MISSING_REFRESH_TOKEN'
+        success: false,
+        error: 'Current password and new password are required'
       });
     }
-    
-    const result = await authService.logout(req.user.userId, refreshToken);
-    
-    res.status(200).json(result);
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'New password must be at least 8 characters long'
+      });
+    }
+
+    const result = await authService.changePassword(userId, {
+      currentPassword,
+      newPassword
+    });
+
+    res.json(result);
+
   } catch (error) {
-    logger.error('Logout route error:', error);
+    logger.error('Password change failed:', error);
     
-    res.status(500).json({
-      error: 'Internal server error during logout',
-      code: 'LOGOUT_ERROR'
-    });
-  }
-});
-
-// Request password reset
-router.post('/forgot-password', async (req, res) => {
-  try {
-    const result = await authService.requestPasswordReset(req.body.email);
-    
-    res.status(200).json(result);
-  } catch (error) {
-    logger.error('Password reset request route error:', error);
-    
-    if (error.name === 'ZodError') {
-      return res.status(400).json({
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: error.errors
+    if (error.message.includes('Current password is incorrect')) {
+      return res.status(401).json({
+        success: false,
+        error: error.message
       });
     }
-    
-    res.status(500).json({
-      error: 'Internal server error during password reset request',
-      code: 'PASSWORD_RESET_ERROR'
-    });
-  }
-});
 
-// Change password (authenticated)
-router.post('/change-password', authMiddleware.authenticateToken.bind(authMiddleware), async (req, res) => {
-  try {
-    const result = await authService.changePassword(req.user.userId, req.body);
-    
-    res.status(200).json(result);
-  } catch (error) {
-    logger.error('Password change route error:', error);
-    
-    if (error.message === 'Current password is incorrect') {
-      return res.status(400).json({
-        error: error.message,
-        code: 'INVALID_CURRENT_PASSWORD'
-      });
-    }
-    
-    if (error.name === 'ZodError') {
-      return res.status(400).json({
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: error.errors
-      });
-    }
-    
-    res.status(500).json({
-      error: 'Internal server error during password change',
-      code: 'PASSWORD_CHANGE_ERROR'
-    });
-  }
-});
-
-// Get current user profile
-router.get('/profile', authMiddleware.authenticateToken.bind(authMiddleware), async (req, res) => {
-  try {
-    const user = await authService.getUserById(req.user.userId);
-    
-    if (!user) {
+    if (error.message.includes('User not found')) {
       return res.status(404).json({
-        error: 'User not found',
-        code: 'USER_NOT_FOUND'
+        success: false,
+        error: error.message
       });
     }
-    
-    // Remove sensitive information
-    const { password_hash, ...userProfile } = user;
-    
-    res.status(200).json({
-      user: userProfile
-    });
-  } catch (error) {
-    logger.error('Profile fetch route error:', error);
-    
+
     res.status(500).json({
-      error: 'Internal server error fetching profile',
-      code: 'PROFILE_FETCH_ERROR'
+      success: false,
+      error: 'Password change failed. Please try again.'
     });
   }
 });
 
-// Health check for auth service
-router.get('/health', async (req, res) => {
+/**
+ * @route   POST /api/auth/request-reset
+ * @desc    Request password reset
+ * @access  Public
+ */
+router.post('/request-reset', async (req, res) => {
   try {
-    res.status(200).json({
-      status: 'OK',
-      service: 'Authentication Service',
-      timestamp: new Date().toISOString()
-    });
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email is required'
+      });
+    }
+
+    const result = await authService.requestPasswordReset(email);
+
+    res.json(result);
+
   } catch (error) {
-    logger.error('Auth health check error:', error);
+    logger.error('Password reset request failed:', error);
+    
     res.status(500).json({
-      status: 'ERROR',
-      service: 'Authentication Service',
-      error: error.message,
-      timestamp: new Date().toISOString()
+      success: false,
+      error: 'Password reset request failed. Please try again.'
     });
   }
+});
+
+/**
+ * @route   POST /api/auth/reset-password
+ * @desc    Reset password with reset token
+ * @access  Public
+ */
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { resetToken, newPassword } = req.body;
+
+    if (!resetToken || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Reset token and new password are required'
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'New password must be at least 8 characters long'
+      });
+    }
+
+    const result = await authService.resetPassword(resetToken, newPassword);
+
+    res.json(result);
+
+  } catch (error) {
+    logger.error('Password reset failed:', error);
+    
+    if (error.message.includes('Invalid or expired reset token')) {
+      return res.status(400).json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Password reset failed. Please try again.'
+    });
+  }
+});
+
+/**
+ * @route   GET /api/auth/profile
+ * @desc    Get user profile (requires authentication)
+ * @access  Private
+ */
+router.get('/profile', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await authService.getUserProfile(userId);
+
+    res.json(result);
+
+  } catch (error) {
+    logger.error('Get user profile failed:', error);
+    
+    if (error.message.includes('User not found')) {
+      return res.status(404).json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get user profile. Please try again.'
+    });
+  }
+});
+
+/**
+ * @route   PUT /api/auth/profile
+ * @desc    Update user profile (requires authentication)
+ * @access  Private
+ */
+router.put('/profile', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const updateData = req.body;
+
+    // Remove sensitive fields that shouldn't be updated via this endpoint
+    const { password_hash, role, is_active, ...allowedUpdates } = updateData;
+
+    const result = await authService.updateUserProfile(userId, allowedUpdates);
+
+    res.json(result);
+
+  } catch (error) {
+    logger.error('Update user profile failed:', error);
+    
+    if (error.message.includes('Username already exists') ||
+        error.message.includes('Email already exists')) {
+      return res.status(409).json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    if (error.message.includes('No valid fields to update')) {
+      return res.status(400).json({
+        success: false,
+        error: error.message
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update profile. Please try again.'
+    });
+  }
+});
+
+/**
+ * @route   POST /api/auth/logout
+ * @desc    Logout user (invalidate refresh token)
+ * @access  Private
+ */
+router.post('/logout', requireAuth, async (req, res) => {
+  try {
+    // In a more sophisticated system, you might want to blacklist the refresh token
+    // For now, we'll just return success since the client should discard the tokens
+    
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+
+  } catch (error) {
+    logger.error('Logout failed:', error);
+    
+    res.status(500).json({
+      success: false,
+      error: 'Logout failed. Please try again.'
+    });
+  }
+});
+
+/**
+ * @route   GET /api/auth/verify
+ * @desc    Verify JWT token and return user info
+ * @access  Private
+ */
+router.get('/verify', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const result = await authService.getUserProfile(userId);
+
+    res.json({
+      success: true,
+      user: result.user,
+      tokenValid: true
+    });
+
+  } catch (error) {
+    logger.error('Token verification failed:', error);
+    
+    res.status(401).json({
+      success: false,
+      error: 'Invalid or expired token',
+      tokenValid: false
+    });
+  }
+});
+
+/**
+ * @route   GET /api/auth/status
+ * @desc    Get authentication status
+ * @access  Public
+ */
+router.get('/status', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Authentication service is running',
+    timestamp: new Date().toISOString(),
+    endpoints: [
+      'POST /register - User registration',
+      'POST /login - User authentication',
+      'POST /refresh - Token refresh',
+      'POST /change-password - Change password',
+      'POST /request-reset - Request password reset',
+      'POST /reset-password - Reset password',
+      'GET /profile - Get user profile',
+      'PUT /profile - Update user profile',
+      'POST /logout - User logout',
+      'GET /verify - Verify token',
+      'GET /status - Service status'
+    ]
+  });
 });
 
 module.exports = router;

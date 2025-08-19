@@ -157,9 +157,51 @@ This guide outlines the complete development roadmap for building the FoundMe Da
 - Breach checking integration
 - Domain reputation scoring
 
-### **Week 4: Advanced Discovery Features**
+### **Week 4: ReconFTW Tool Integration**
 
-#### **4.1 Document & Metadata Analysis**
+#### **4.1 Infrastructure Discovery Tools**
+- [ ] Install and configure ReconFTW tools in Docker
+- [ ] Integrate subdomain discovery (Amass, Subfinder, Assetfinder)
+- [ ] Implement port scanning (Nmap, Naabu)
+- [ ] Add web enumeration (Gobuster, Dirsearch, FFUF)
+- [ ] DNS intelligence gathering (DNSx, Shodan CLI)
+
+**Technical Requirements:**
+- Docker containerization of ReconFTW tools
+- Tool output parsing and standardization
+- Rate limiting and ethical usage compliance
+- Tool result aggregation and deduplication
+
+**Deliverables:**
+- ReconFTW tool integration
+- Infrastructure discovery engine
+- Tool output parser
+- Rate limiting system
+
+#### **4.2 Security Assessment Tools**
+- [ ] Integrate vulnerability scanning (Nuclei, Vulners)
+- [ ] Certificate transparency monitoring (CTFR, Crt.sh)
+- [ ] Historical content analysis (Waybackurls)
+- [ ] GitHub reconnaissance (GitDorks)
+- [ ] Cloud asset discovery (Cloudlist, S3Scanner)
+
+**Technical Requirements:**
+- Vulnerability database integration
+- Certificate transparency monitoring
+- Historical web content analysis
+- Cloud infrastructure mapping
+- Security finding prioritization
+
+**Deliverables:**
+- Security assessment engine
+- Vulnerability scanning system
+- Certificate monitoring
+- Cloud asset discovery
+- Security risk scoring
+
+### **Week 5: Advanced Discovery Features**
+
+#### **5.1 Document & Metadata Analysis**
 - [ ] PDF metadata extraction with pdf2pic
 - [ ] Image EXIF data with exifr
 - [ ] Document authorship analysis
@@ -178,7 +220,7 @@ This guide outlines the complete development roadmap for building the FoundMe Da
 - Risk assessment algorithms
 - Document classification system
 
-#### **4.2 Geolocation Tracking**
+#### **5.2 Geolocation Tracking**
 - [ ] GPS coordinate extraction
 - [ ] Location pattern analysis
 - [ ] Travel timeline mapping

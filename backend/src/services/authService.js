@@ -1,102 +1,65 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { z } = require('zod');
-const { postgresPool, redisClient, logger } = require('../config/database');
-const { v4: uuidv4 } = require('uuid');
-
-// Validation schemas
-const userRegistrationSchema = z.object({
-  email: z.string().email().toLowerCase().trim(),
-  password: z.string().min(8).regex(
-    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/,
-    'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
-  ),
-  firstName: z.string().min(2).max(50).trim(),
-  lastName: z.string().min(2).max(50).trim(),
-  phone: z.string().optional(),
-  company: z.string().optional(),
-  jobTitle: z.string().optional()
-});
-
-const userLoginSchema = z.object({
-  email: z.string().email().toLowerCase().trim(),
-  password: z.string().min(1, 'Password is required')
-});
-
-const passwordResetSchema = z.object({
-  email: z.string().email().toLowerCase().trim()
-});
-
-const passwordChangeSchema = z.object({
-  currentPassword: z.string().min(1, 'Current password is required'),
-  newPassword: z.string().min(8).regex(
-    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/,
-    'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
-  )
-});
+const { logger } = require('../config/database');
+const User = require('../models/User');
 
 class AuthService {
   constructor() {
-    this.jwtSecret = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
+    this.jwtSecret = process.env.JWT_SECRET || 'dev_jwt_secret_key_678_secure_development_only';
     this.jwtExpiresIn = process.env.JWT_EXPIRES_IN || '24h';
     this.refreshTokenExpiresIn = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
-    this.maxLoginAttempts = 5;
-    this.lockoutDuration = 15 * 60 * 1000; // 15 minutes
   }
 
-  // User Registration
+  /**
+   * Register a new user
+   */
   async registerUser(userData) {
     try {
-      // Validate input data
-      const validatedData = userRegistrationSchema.parse(userData);
-      
+      const { username, email, password, role = 'user' } = userData;
+
       // Check if user already exists
-      const existingUser = await this.getUserByEmail(validatedData.email);
+      const existingUser = await User.findByUsername(username);
       if (existingUser) {
-        throw new Error('User with this email already exists');
+        throw new Error('Username already exists');
+      }
+
+      const existingEmail = await User.findByEmail(email);
+      if (existingEmail) {
+        throw new Error('Email already exists');
       }
 
       // Hash password
       const saltRounds = 12;
-      const hashedPassword = await bcrypt.hash(validatedData.password, saltRounds);
+      const passwordHash = await bcrypt.hash(password, saltRounds);
 
       // Create user
-      const userId = uuidv4();
-      const query = `
-        INSERT INTO users (id, email, password_hash, first_name, last_name, created_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
-        RETURNING id, email, first_name, last_name, created_at
-      `;
-
-      const values = [
-        userId,
-        validatedData.email,
-        hashedPassword,
-        validatedData.firstName,
-        validatedData.lastName
-      ];
-
-      const result = await postgresPool.query(query, values);
-      const newUser = result.rows[0];
-
-      // Create user profile
-      await this.createUserProfile(userId, validatedData);
+      const user = await User.create({
+        username,
+        email,
+        password_hash: passwordHash,
+        role,
+        search_quota_daily: 100,
+        search_quota_monthly: 1000
+      });
 
       // Generate tokens
-      const { accessToken, refreshToken } = await this.generateTokens(newUser);
+      const { accessToken, refreshToken } = this.generateTokens(user.id);
 
-      logger.info(`User registered successfully: ${newUser.email}`);
+      logger.info(`User registered successfully: ${username}`);
 
       return {
+        success: true,
         user: {
-          id: newUser.id,
-          email: newUser.email,
-          firstName: newUser.first_name,
-          lastName: newUser.last_name,
-          createdAt: newUser.created_at
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          created_at: user.created_at
         },
-        accessToken,
-        refreshToken
+        tokens: {
+          accessToken,
+          refreshToken
+        }
       };
 
     } catch (error) {
@@ -105,57 +68,55 @@ class AuthService {
     }
   }
 
-  // User Login
-  async loginUser(loginData) {
+  /**
+   * Authenticate user login
+   */
+  async loginUser(credentials) {
     try {
-      // Validate input data
-      const validatedData = userLoginSchema.parse(loginData);
+      const { username, password } = credentials;
 
-      // Get user by email
-      const user = await this.getUserByEmail(validatedData.email);
+      // Find user by username or email
+      let user = await User.findByUsername(username);
       if (!user) {
-        throw new Error('Invalid email or password');
+        user = await User.findByEmail(username);
       }
 
-      // Check if account is locked
-      if (user.locked_until && new Date() < user.locked_until) {
-        const remainingTime = Math.ceil((user.locked_until - new Date()) / 1000 / 60);
-        throw new Error(`Account is locked. Try again in ${remainingTime} minutes`);
+      if (!user) {
+        throw new Error('Invalid credentials');
+      }
+
+      if (!user.is_active) {
+        throw new Error('Account is deactivated');
       }
 
       // Verify password
-      const isPasswordValid = await bcrypt.compare(validatedData.password, user.password_hash);
+      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
       if (!isPasswordValid) {
-        await this.recordFailedLogin(user.id);
-        throw new Error('Invalid email or password');
-      }
-
-      // Reset failed login attempts on successful login
-      if (user.failed_login_attempts > 0) {
-        await this.resetFailedLoginAttempts(user.id);
+        throw new Error('Invalid credentials');
       }
 
       // Update last login
-      await this.updateLastLogin(user.id);
+      await User.updateLastLogin(user.id);
 
       // Generate tokens
-      const { accessToken, refreshToken } = await this.generateTokens(user);
+      const { accessToken, refreshToken } = this.generateTokens(user.id);
 
-      // Store refresh token in Redis
-      await this.storeRefreshToken(user.id, refreshToken);
-
-      logger.info(`User logged in successfully: ${user.email}`);
+      logger.info(`User logged in successfully: ${user.username}`);
 
       return {
+        success: true,
         user: {
           id: user.id,
+          username: user.username,
           email: user.email,
-          firstName: user.first_name,
-          lastName: user.last_name,
-          lastLoginAt: user.last_login_at
+          role: user.role,
+          created_at: user.created_at,
+          last_login: new Date().toISOString()
         },
-        accessToken,
-        refreshToken
+        tokens: {
+          accessToken,
+          refreshToken
+        }
       };
 
     } catch (error) {
@@ -164,68 +125,73 @@ class AuthService {
     }
   }
 
-  // Generate JWT Tokens
-  async generateTokens(user) {
-    try {
-      const payload = {
-        userId: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name
-      };
+  /**
+   * Generate JWT tokens
+   */
+  generateTokens(userId) {
+    const accessToken = jwt.sign(
+      { userId, type: 'access' },
+      this.jwtSecret,
+      { expiresIn: this.jwtExpiresIn }
+    );
 
-      const accessToken = jwt.sign(payload, this.jwtSecret, {
-        expiresIn: this.jwtExpiresIn
-      });
+    const refreshToken = jwt.sign(
+      { userId, type: 'refresh' },
+      this.jwtSecret,
+      { expiresIn: this.refreshTokenExpiresIn }
+    );
 
-      const refreshToken = jwt.sign(payload, this.jwtSecret, {
-        expiresIn: this.refreshTokenExpiresIn
-      });
-
-      return { accessToken, refreshToken };
-    } catch (error) {
-      logger.error('Token generation failed:', error);
-      throw error;
-    }
+    return { accessToken, refreshToken };
   }
 
-  // Verify JWT Token
-  async verifyToken(token) {
+  /**
+   * Verify JWT token
+   */
+  verifyToken(token) {
     try {
       const decoded = jwt.verify(token, this.jwtSecret);
-      return decoded;
+      return { valid: true, decoded };
     } catch (error) {
-      if (error.name === 'TokenExpiredError') {
-        throw new Error('Token has expired');
-      } else if (error.name === 'JsonWebTokenError') {
-        throw new Error('Invalid token');
-      }
-      throw error;
+      return { valid: false, error: error.message };
     }
   }
 
-  // Refresh Access Token
+  /**
+   * Refresh access token
+   */
   async refreshAccessToken(refreshToken) {
     try {
-      // Verify refresh token
-      const decoded = await this.verifyToken(refreshToken);
+      const { valid, decoded } = this.verifyToken(refreshToken);
       
-      // Check if refresh token exists in Redis
-      const storedToken = await this.getRefreshToken(decoded.userId);
-      if (!storedToken || storedToken !== refreshToken) {
+      if (!valid || decoded.type !== 'refresh') {
         throw new Error('Invalid refresh token');
       }
 
-      // Get user data
-      const user = await this.getUserById(decoded.userId);
-      if (!user) {
-        throw new Error('User not found');
+      // Verify user still exists and is active
+      const user = await User.findById(decoded.userId);
+      if (!user || !user.is_active) {
+        throw new Error('User not found or inactive');
       }
 
       // Generate new access token
-      const { accessToken } = await this.generateTokens(user);
+      const newAccessToken = jwt.sign(
+        { userId: decoded.userId, type: 'access' },
+        this.jwtSecret,
+        { expiresIn: this.jwtExpiresIn }
+      );
 
-      return { accessToken };
+      logger.info(`Access token refreshed for user: ${user.username}`);
+
+      return {
+        success: true,
+        accessToken: newAccessToken,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          role: user.role
+        }
+      };
 
     } catch (error) {
       logger.error('Token refresh failed:', error);
@@ -233,68 +199,38 @@ class AuthService {
     }
   }
 
-  // Password Reset Request
-  async requestPasswordReset(email) {
-    try {
-      const validatedData = passwordResetSchema.parse({ email });
-
-      const user = await this.getUserByEmail(validatedData.email);
-      if (!user) {
-        // Don't reveal if user exists or not
-        return { message: 'If an account with this email exists, a password reset link has been sent' };
-      }
-
-      // Generate reset token
-      const resetToken = nanoid(32);
-      const resetTokenHash = await bcrypt.hash(resetToken, 10);
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-      // Store reset token
-      await this.storePasswordResetToken(user.id, resetTokenHash, expiresAt);
-
-      // TODO: Send email with reset link
-      logger.info(`Password reset requested for user: ${user.email}`);
-
-      return { message: 'If an account with this email exists, a password reset link has been sent' };
-
-    } catch (error) {
-      logger.error('Password reset request failed:', error);
-      throw error;
-    }
-  }
-
-  // Change Password
+  /**
+   * Change user password
+   */
   async changePassword(userId, passwordData) {
     try {
-      const validatedData = passwordChangeSchema.parse(passwordData);
+      const { currentPassword, newPassword } = passwordData;
 
-      const user = await this.getUserById(userId);
+      // Get user
+      const user = await User.findById(userId);
       if (!user) {
         throw new Error('User not found');
       }
 
       // Verify current password
-      const isCurrentPasswordValid = await bcrypt.compare(validatedData.currentPassword, user.password_hash);
+      const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
       if (!isCurrentPasswordValid) {
         throw new Error('Current password is incorrect');
       }
 
       // Hash new password
       const saltRounds = 12;
-      const newPasswordHash = await bcrypt.hash(validatedData.newPassword, saltRounds);
+      const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
 
       // Update password
-      await postgresPool.query(
-        'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-        [newPasswordHash, userId]
-      );
+      await User.updatePassword(userId, newPasswordHash);
 
-      // Invalidate all refresh tokens for this user
-      await this.invalidateUserRefreshTokens(userId);
+      logger.info(`Password changed successfully for user: ${user.username}`);
 
-      logger.info(`Password changed successfully for user: ${user.email}`);
-
-      return { message: 'Password changed successfully' };
+      return {
+        success: true,
+        message: 'Password changed successfully'
+      };
 
     } catch (error) {
       logger.error('Password change failed:', error);
@@ -302,165 +238,229 @@ class AuthService {
     }
   }
 
-  // Logout
-  async logout(userId, refreshToken) {
+  /**
+   * Request password reset
+   */
+  async requestPasswordReset(email) {
     try {
-      // Remove refresh token from Redis
-      await this.removeRefreshToken(userId, refreshToken);
-      
-      logger.info(`User logged out: ${userId}`);
-      
-      return { message: 'Logged out successfully' };
-    } catch (error) {
-      logger.error('Logout failed:', error);
-      throw error;
-    }
-  }
-
-  // Helper Methods
-  async getUserByEmail(email) {
-    try {
-      const result = await postgresPool.query(
-        'SELECT * FROM users WHERE email = $1',
-        [email]
-      );
-      return result.rows[0] || null;
-    } catch (error) {
-      logger.error('Failed to get user by email:', error);
-      throw error;
-    }
-  }
-
-  async getUserById(userId) {
-    try {
-      const result = await postgresPool.query(
-        'SELECT * FROM users WHERE id = $1',
-        [userId]
-      );
-      return result.rows[0] || null;
-    } catch (error) {
-      logger.error('Failed to get user by ID:', error);
-      throw error;
-    }
-  }
-
-  async createUserProfile(userId, userData = {}) {
-    try {
-      const query = `
-        INSERT INTO user_profiles (
-          user_id, 
-          phone, 
-          company, 
-          job_title, 
-          created_at
-        ) VALUES ($1, $2, $3, $4, NOW())
-      `;
-      
-      const values = [
-        userId,
-        userData.phone || null,
-        userData.company || null,
-        userData.jobTitle || null
-      ];
-      
-      await postgresPool.query(query, values);
-    } catch (error) {
-      logger.error('Failed to create user profile:', error);
-      throw error;
-    }
-  }
-
-  async recordFailedLogin(userId) {
-    try {
-      const result = await postgresPool.query(
-        'UPDATE users SET failed_login_attempts = failed_login_attempts + 1, updated_at = NOW() WHERE id = $1 RETURNING failed_login_attempts',
-        [userId]
-      );
-
-      const failedAttempts = result.rows[0].failed_login_attempts;
-
-      // Lock account if max attempts reached
-      if (failedAttempts >= this.maxLoginAttempts) {
-        const lockoutUntil = new Date(Date.now() + this.lockoutDuration);
-        await postgresPool.query(
-          'UPDATE users SET locked_until = $1 WHERE id = $2',
-          [lockoutUntil, userId]
-        );
-        logger.warn(`Account locked for user: ${userId} due to multiple failed login attempts`);
+      const user = await User.findByEmail(email);
+      if (!user) {
+        // Don't reveal if email exists or not
+        return {
+          success: true,
+          message: 'If the email exists, a reset link has been sent'
+        };
       }
-    } catch (error) {
-      logger.error('Failed to record failed login:', error);
-    }
-  }
 
-  async resetFailedLoginAttempts(userId) {
-    try {
-      await postgresPool.query(
-        'UPDATE users SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() WHERE id = $1',
-        [userId]
+      // Generate reset token (valid for 1 hour)
+      const resetToken = jwt.sign(
+        { userId: user.id, type: 'reset' },
+        this.jwtSecret,
+        { expiresIn: '1h' }
       );
-    } catch (error) {
-      logger.error('Failed to reset failed login attempts:', error);
-    }
-  }
 
-  async updateLastLogin(userId) {
-    try {
-      await postgresPool.query(
-        'UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1',
-        [userId]
-      );
-    } catch (error) {
-      logger.error('Failed to update last login:', error);
-    }
-  }
+      // Store reset token in user record (you might want to add a reset_token field to users table)
+      // For now, we'll just log it
+      logger.info(`Password reset requested for user: ${user.username}, token: ${resetToken}`);
 
-  async storeRefreshToken(userId, refreshToken) {
-    try {
-      const key = `refresh_token:${userId}`;
-      await redisClient.setEx(key, parseInt(this.refreshTokenExpiresIn) * 24 * 60 * 60, refreshToken);
-    } catch (error) {
-      logger.error('Failed to store refresh token:', error);
-    }
-  }
+      // TODO: Send email with reset link
+      // In development, we'll just return the token
+      if (process.env.NODE_ENV === 'development') {
+        return {
+          success: true,
+          message: 'Password reset link sent (development mode)',
+          resetToken: resetToken
+        };
+      }
 
-  async getRefreshToken(userId) {
-    try {
-      const key = `refresh_token:${userId}`;
-      return await redisClient.get(key);
-    } catch (error) {
-      logger.error('Failed to get refresh token:', error);
-      return null;
-    }
-  }
+      return {
+        success: true,
+        message: 'If the email exists, a reset link has been sent'
+      };
 
-  async removeRefreshToken(userId, refreshToken) {
-    try {
-      const key = `refresh_token:${userId}`;
-      await redisClient.del(key);
     } catch (error) {
-      logger.error('Failed to remove refresh token:', error);
-    }
-  }
-
-  async invalidateUserRefreshTokens(userId) {
-    try {
-      const key = `refresh_token:${userId}`;
-      await redisClient.del(key);
-    } catch (error) {
-      logger.error('Failed to invalidate user refresh tokens:', error);
-    }
-  }
-
-  async storePasswordResetToken(userId, tokenHash, expiresAt) {
-    try {
-      await postgresPool.query(
-        'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
-        [userId, tokenHash, expiresAt]
-      );
-    } catch (error) {
-      logger.error('Failed to store password reset token:', error);
+      logger.error('Password reset request failed:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Reset password with token
+   */
+  async resetPassword(resetToken, newPassword) {
+    try {
+      const { valid, decoded } = this.verifyToken(resetToken);
+      
+      if (!valid || decoded.type !== 'reset') {
+        throw new Error('Invalid or expired reset token');
+      }
+
+      // Hash new password
+      const saltRounds = 12;
+      const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
+
+      // Update password
+      await User.updatePassword(decoded.userId, newPasswordHash);
+
+      logger.info(`Password reset successfully for user ID: ${decoded.userId}`);
+
+      return {
+        success: true,
+        message: 'Password reset successfully'
+      };
+
+    } catch (error) {
+      logger.error('Password reset failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user profile
+   */
+  async getUserProfile(userId) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Remove sensitive information
+      const { password_hash, ...userProfile } = user;
+
+      return {
+        success: true,
+        user: userProfile
+      };
+
+    } catch (error) {
+      logger.error('Get user profile failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update user profile
+   */
+  async updateUserProfile(userId, updateData) {
+    try {
+      const allowedFields = ['username', 'email'];
+      const filteredData = {};
+
+      // Only allow certain fields to be updated
+      for (const field of allowedFields) {
+        if (updateData[field] !== undefined) {
+          filteredData[field] = updateData[field];
+        }
+      }
+
+      if (Object.keys(filteredData).length === 0) {
+        throw new Error('No valid fields to update');
+      }
+
+      // Check for uniqueness if updating username or email
+      if (filteredData.username) {
+        const existingUser = await User.findByUsername(filteredData.username);
+        if (existingUser && existingUser.id !== userId) {
+          throw new Error('Username already exists');
+        }
+      }
+
+      if (filteredData.email) {
+        const existingUser = await User.findByEmail(filteredData.email);
+        if (existingUser && existingUser.id !== userId) {
+          throw new Error('Email already exists');
+        }
+      }
+
+      // Update user
+      await User.update(userId, filteredData);
+
+      logger.info(`User profile updated for user ID: ${userId}`);
+
+      return {
+        success: true,
+        message: 'Profile updated successfully'
+      };
+
+    } catch (error) {
+      logger.error('Update user profile failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Deactivate user account
+   */
+  async deactivateUser(userId) {
+    try {
+      await User.update(userId, { is_active: false });
+      
+      logger.info(`User account deactivated for user ID: ${userId}`);
+
+      return {
+        success: true,
+        message: 'Account deactivated successfully'
+      };
+
+    } catch (error) {
+      logger.error('Deactivate user failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if user has permission for action
+   */
+  async checkPermission(userId, action, resource = null) {
+    try {
+      const user = await User.findById(userId);
+      if (!user || !user.is_active) {
+        return { hasPermission: false, reason: 'User not found or inactive' };
+      }
+
+      // Admin has all permissions
+      if (user.role === 'admin') {
+        return { hasPermission: true };
+      }
+
+      // Check specific permissions based on role and action
+      switch (action) {
+        case 'search':
+          // Check daily quota
+          const dailyUsage = await this.getDailySearchUsage(userId);
+          if (dailyUsage >= user.search_quota_daily) {
+            return { hasPermission: false, reason: 'Daily search quota exceeded' };
+          }
+          return { hasPermission: true };
+
+        case 'export':
+          return { hasPermission: true };
+
+        case 'delete_session':
+          return { hasPermission: true };
+
+        default:
+          return { hasPermission: false, reason: 'Unknown action' };
+      }
+
+    } catch (error) {
+      logger.error('Permission check failed:', error);
+      return { hasPermission: false, reason: 'Permission check failed' };
+    }
+  }
+
+  /**
+   * Get daily search usage for user
+   */
+  async getDailySearchUsage(userId) {
+    try {
+      // This would query the search_history table
+      // For now, return 0 (no usage tracked yet)
+      return 0;
+    } catch (error) {
+      logger.error('Get daily search usage failed:', error);
+      return 0;
     }
   }
 }

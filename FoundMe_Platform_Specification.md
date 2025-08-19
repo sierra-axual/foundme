@@ -1,5 +1,26 @@
 # 🔎 Data Discovery & Footprint Mapping
 
+## **OSINT Reconnaissance Engine (ReconFTW Integration)**
+
+### **Infrastructure Discovery**
+- **Subdomain Enumeration:** Amass, Subfinder, Assetfinder for comprehensive domain mapping
+- **Port Scanning:** Nmap, Naabu for service discovery and attack surface analysis
+- **Web Enumeration:** Gobuster, Dirsearch, FFUF for hidden endpoints and sensitive files
+- **DNS Intelligence:** DNSx, Shodan CLI for infrastructure reconnaissance
+- **Certificate Transparency:** CTFR, Crt.sh for SSL/TLS certificate discovery
+- **Historical Analysis:** Waybackurls for deleted content and historical pages
+
+### **Security Assessment**
+- **Vulnerability Scanning:** Nuclei, Vulners for automated security testing
+- **Cloud Asset Discovery:** Cloudlist, S3Scanner for cloud infrastructure mapping
+- **GitHub Reconnaissance:** GitDorks for exposed credentials and sensitive repositories
+- **Technology Stack Analysis:** Wappalyzer integration for application fingerprinting
+
+### **Risk Intelligence**
+- **Attack Surface Mapping:** Comprehensive view of all exposed assets
+- **Vulnerability Prioritization:** Risk-scored findings with business impact assessment
+- **Threat Modeling:** AI-powered analysis of potential attack vectors
+
 ## Social Media Presence Mapping
 
 Detect all accounts linked to a name, email, phone, or alias (public + semi-public sources).

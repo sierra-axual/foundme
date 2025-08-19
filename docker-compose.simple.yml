@@ -9,9 +9,6 @@ services:
     container_name: foundme-frontend-dev
     ports:
       - "8472:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     environment:
       - NODE_ENV=development
       - REACT_APP_API_URL=http://localhost:3001
@@ -26,10 +23,6 @@ services:
     container_name: foundme-backend-dev
     ports:
       - "3001:3001"
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-      - ./database/init:/app/database/init:ro
     environment:
       - NODE_ENV=development
       - PORT=3001
@@ -61,9 +54,6 @@ services:
       - POSTGRES_DB=foundme_dev
       - POSTGRES_USER=foundme_user
       - POSTGRES_PASSWORD=dev_password_secure_123
-    volumes:
-      - ./database/postgres_data:/var/lib/postgresql/data
-      - ./database/init:/docker-entrypoint-initdb.d
     networks:
       - foundme-dev-network
 
@@ -74,8 +64,17 @@ services:
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
-    volumes:
-      - ./cache/redis_data:/data
+    networks:
+      - foundme-dev-network
+
+  # ReconFTW OSINT Tools Container
+  reconftw:
+    build:
+      context: ./reconftw
+      dockerfile: Dockerfile
+    container_name: foundme-reconftw
+    ports:
+      - "5000:5000"  # API port
     networks:
       - foundme-dev-network
 

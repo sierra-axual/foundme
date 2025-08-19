@@ -1,9 +1,9 @@
-const AuthService = require('../services/authService');
+const jwt = require('jsonwebtoken');
 const { logger } = require('../config/database');
 
 class AuthMiddleware {
   constructor() {
-    this.authService = new AuthService();
+    this.jwtSecret = process.env.JWT_SECRET || 'dev_jwt_secret_key_678_secure_development_only';
   }
 
   // Verify JWT token and attach user to request
@@ -14,31 +14,51 @@ class AuthMiddleware {
 
       if (!token) {
         return res.status(401).json({
+          success: false,
           error: 'Access token required',
           code: 'MISSING_TOKEN'
         });
       }
 
       try {
-        const decoded = await this.authService.verifyToken(token);
+        const decoded = jwt.verify(token, this.jwtSecret);
+        
+        // Verify token type
+        if (decoded.type !== 'access') {
+          return res.status(401).json({
+            success: false,
+            error: 'Invalid token type',
+            code: 'INVALID_TOKEN_TYPE'
+          });
+        }
+        
         req.user = decoded;
         next();
       } catch (tokenError) {
-        if (tokenError.message === 'Token has expired') {
+        if (tokenError.name === 'TokenExpiredError') {
           return res.status(401).json({
+            success: false,
             error: 'Token has expired',
             code: 'TOKEN_EXPIRED'
           });
-        } else {
+        } else if (tokenError.name === 'JsonWebTokenError') {
           return res.status(401).json({
+            success: false,
             error: 'Invalid token',
             code: 'INVALID_TOKEN'
           });
         }
+        
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid token',
+          code: 'INVALID_TOKEN'
+        });
       }
     } catch (error) {
       logger.error('Authentication middleware error:', error);
       return res.status(500).json({
+        success: false,
         error: 'Internal server error during authentication',
         code: 'AUTH_ERROR'
       });
@@ -264,4 +284,19 @@ class AuthMiddleware {
   }
 }
 
-module.exports = AuthMiddleware;
+// Export middleware functions for direct use
+const requireAuth = (req, res, next) => {
+  const authMiddleware = new AuthMiddleware();
+  return authMiddleware.authenticateToken(req, res, next);
+};
+
+const requireRole = (role) => {
+  const authMiddleware = new AuthMiddleware();
+  return authMiddleware.requireRole(role);
+};
+
+module.exports = {
+  AuthMiddleware,
+  requireAuth,
+  requireRole
+};

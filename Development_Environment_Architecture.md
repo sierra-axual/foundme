@@ -1,26 +1,27 @@
 # 🐳 Development Environment Architecture Specification
 
 ## Overview
-This document outlines the Docker-based development environment architecture for the FoundMe Data Discovery & Footprint Mapping platform. All ports have been randomized to avoid conflicts with existing projects.
+This document outlines the Docker-based development environment architecture for the FoundMe Data Discovery & Footprint Mapping platform. The platform uses a simplified monolithic backend architecture with integrated ReconFTW OSINT tools. All ports have been randomized to avoid conflicts with existing projects.
 
 ## 🏗️ Architecture Components
 
 ### Frontend Application
 - **Technology**: React + TypeScript + Vite
-- **Port**: 8472 (randomized from default 3000)
+- **Port**: 3000 (mapped from container)
 - **Container**: `foundme-frontend-dev`
 - **Volume Mounts**: 
   - `./frontend/src:/app/src`
   - `./frontend/public:/app/public`
   - `./frontend/package.json:/app/package.json`
 
-### Backend API Gateway
-- **Technology**: Node.js + Express
-- **Port**: 5928 (randomized from default 3001)
-- **Container**: `foundme-api-gateway-dev`
+### Backend Monolithic Service
+- **Technology**: Node.js + Express + ReconFTW Tools
+- **Port**: 3001 (mapped from container)
+- **Container**: `foundme-backend-dev`
 - **Volume Mounts**:
-  - `./api-gateway/src:/app/src`
-  - `./api-gateway/package.json:/app/package.json`
+  - `./backend/src:/app/src`
+  - `./backend/package.json:/app/package.json`
+  - `./database/init:/app/database/init:ro`
 
 ### Authentication Service
 - **Technology**: Node.js + JWT + bcrypt
@@ -54,13 +55,30 @@ This document outlines the Docker-based development environment architecture for
   - `./services/subscription/src:/app/src`
   - `./services/subscription/package.json:/app/package.json`
 
-### Notification Service
-- **Technology**: Node.js + WebSocket + Email/SMS
-- **Port**: 4857 (randomized from default 3006)
-- **Container**: `foundme-notification-service-dev`
-- **Volume Mounts**:
-  - `./services/notification/src:/app/src`
-  - `./services/notification/package.json:/app/package.json`
+## 🔍 **ReconFTW OSINT Tools Integration**
+
+### **Infrastructure Discovery Tools**
+- **Subdomain Enumeration**: Amass, Subfinder, Assetfinder
+- **Port Scanning**: Nmap, Naabu
+- **Web Enumeration**: Gobuster, Dirsearch, FFUF
+- **DNS Intelligence**: DNSx, Shodan CLI
+- **Certificate Transparency**: CTFR, Crt.sh
+
+### **Security Assessment Tools**
+- **Vulnerability Scanning**: Nuclei, Vulners
+- **Historical Analysis**: Waybackurls
+- **GitHub Reconnaissance**: GitDorks
+- **Cloud Asset Discovery**: Cloudlist, S3Scanner
+- **Technology Stack Analysis**: Wappalyzer
+
+### **Tool Integration Architecture**
+- **Containerization**: All tools run in isolated Docker containers
+- **Output Parsing**: Standardized JSON output for all tools
+- **Rate Limiting**: Ethical usage compliance and rate limiting
+- **Result Aggregation**: Deduplication and correlation of findings
+- **Risk Scoring**: Automated risk assessment of discovered assets
+
+## 📋 Data Storage
 
 ## 📋 Data Storage
 

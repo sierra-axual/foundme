@@ -3,6 +3,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { postgresPool, redisClient, logger } = require('../config/database');
 const { v4: uuidv4 } = require('uuid');
+const ReconFTWService = require('./reconftwService');
 
 class DiscoveryService {
   constructor() {
@@ -14,6 +15,9 @@ class DiscoveryService {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     ];
+    
+    // Initialize ReconFTW service for OSINT tools
+    this.reconftw = new ReconFTWService();
   }
 
   // Initialize browser instance
@@ -235,26 +239,59 @@ class DiscoveryService {
       subdomains: [],
       technologies: [],
       security: {},
-      metadata: {}
+      metadata: {},
+      reconftw: {}
     };
 
     try {
       // Domain information
       results.domainInfo = await this.discoverDomainInfo(targetValue);
 
-      // Subdomain discovery
-      results.subdomains = await this.discoverSubdomains(targetValue);
+      // Run comprehensive ReconFTW reconnaissance
+      logger.info(`Starting ReconFTW reconnaissance for domain: ${targetValue}`);
+      results.reconftw = await this.reconftw.runFullReconnaissance(targetValue);
+
+      // Extract results from ReconFTW based on what's available
+      if (results.reconftw.nmap && results.reconftw.nmap.success) {
+        results.security.openPorts = results.reconftw.nmap.ports || [];
+      }
+
+      if (results.reconftw.whois && results.reconftw.whois.success) {
+        results.domainInfo.whois = results.reconftw.whois.whois;
+      }
+
+      if (results.reconftw.dns && results.reconftw.dns.success) {
+        results.domainInfo.dns = results.reconftw.dns.dns;
+      }
+
+      if (results.reconftw.dirsearch && results.reconftw.dirsearch.success) {
+        results.security.webPaths = results.reconftw.dirsearch.paths || [];
+      }
+
+      // Log ReconFTW tool availability
+      if (results.reconftw.summary && results.reconftw.summary.availableTools) {
+        logger.info(`ReconFTW tools available: ${results.reconftw.summary.availableTools.join(', ')}`);
+      }
+
+      // Extract subdomains from ReconFTW results
+      if (results.reconftw.subdomains && results.reconftw.subdomains.combined) {
+        results.subdomains = results.reconftw.subdomains.combined;
+      }
+
+      // Extract security findings from ReconFTW
+      if (results.reconftw.vulnerabilities && results.reconftw.vulnerabilities.vulnerabilities) {
+        results.security.vulnerabilities = results.reconftw.vulnerabilities.vulnerabilities;
+      }
 
       // Technology stack
       results.technologies = await this.discoverTechnologies(targetValue);
-
-      // Security information
-      results.security = await this.discoverSecurityInfo(targetValue);
 
       // Metadata extraction
       if (includeMetadata) {
         results.metadata = await this.extractMetadata(targetValue);
       }
+
+      logger.info(`Domain scan completed for ${targetValue} with ReconFTW integration`);
 
     } catch (error) {
       logger.error('Domain scan failed:', error);
