@@ -38,7 +38,7 @@
     "pdf2pic": "^3.1.0",
     "csv-parser": "^3.0.0",
     "fast-xml-parser": "^4.3.2",
-    "nanoid": "^5.0.4",
+            "uuid": "^9.0.1",
     "dayjs": "^1.11.10",
     "dotenv": "^16.3.1",
     "winston": "^3.11.0",

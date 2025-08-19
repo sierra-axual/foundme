@@ -105,14 +105,8 @@ INSERT INTO notification_templates (name, description, type, subject_template, m
  'Your weekly security report is ready. New findings: {{new_findings}}, Risk trend: {{risk_trend}}. View report at {{report_url}}.',
  '["week_of", "new_findings", "risk_trend", "report_url"]');
 
--- Insert default notification preferences
-INSERT INTO notification_preferences (user_id, type, category, is_enabled, frequency) VALUES
-('00000000-0000-0000-0000-000000000000', 'email', 'security', true, 'immediate'),
-('00000000-0000-0000-0000-000000000000', 'email', 'scan_results', true, 'immediate'),
-('00000000-0000-0000-0000-000000000000', 'sms', 'risk_alerts', true, 'immediate'),
-('00000000-0000-0000-0000-000000000000', 'email', 'billing', true, 'daily'),
-('00000000-0000-0000-0000-000000000000', 'email', 'system', true, 'immediate'),
-('00000000-0000-0000-0000-000000000000', 'email', 'marketing', false, 'weekly');
+-- Note: Default notification preferences will be created when users register
+-- No sample data inserted here to avoid foreign key constraint violations
 
 -- Create indexes for better performance
 CREATE INDEX idx_notifications_user_id ON notifications(user_id);

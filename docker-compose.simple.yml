@@ -29,12 +29,20 @@ services:
     volumes:
       - ./backend:/app
       - /app/node_modules
+      - ./database/init:/app/database/init:ro
     environment:
       - NODE_ENV=development
       - PORT=3001
-      - DATABASE_URL=postgresql://foundme_user:dev_password_secure_123@postgres:5432/foundme_dev
-      - REDIS_URL=redis://redis:6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=foundme_dev
+      - POSTGRES_USER=foundme_user
+      - POSTGRES_PASSWORD=dev_password_secure_123
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - JWT_SECRET=dev_jwt_secret_key_678_secure_development_only
+      - JWT_EXPIRES_IN=24h
+      - REFRESH_TOKEN_EXPIRES_IN=7d
       - STRIPE_SECRET_KEY=sk_test_your_stripe_test_key_here
       - HIBP_API_KEY=your_haveibeenpwned_api_key_here
     depends_on:
